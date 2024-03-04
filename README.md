@@ -32,4 +32,5 @@ Once configured, you can access Anthropic AI by:
 Pull requests welcome!
 
 ## License
+
 This project is licensed under the MIT license.
