@@ -1,4 +1,5 @@
 # Prompt Mixer - Anthropic AI Connector
+
 This connector allows you to access Anthropic's AI API from within Prompt Mixer.
 
 ## Features
@@ -21,13 +22,15 @@ This connector allows you to access Anthropic's AI API from within Prompt Mixer.
 4. Start using Anthropic AI models in your prompts
 
 ## Usage
+
 Once configured, you can access Anthropic AI by:
 
 - Selecting "Anthropic AI" from the models dropdown
 
 ## Contributing
+
 Pull requests welcome!
 
-
 ## License
+
 This project is licensed under the MIT license.
