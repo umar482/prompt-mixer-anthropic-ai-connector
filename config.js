@@ -1,11 +1,17 @@
 export const config = {
 	connectorName: 'AnthropicAI',
-	models: ['claude-instant-1.2', 'claude-2.0', 'claude-2.1'],
+	models: [
+		'claude-instant-1.2',
+		'claude-2.0',
+		'claude-2.1',
+		'claude-3-opus-20240229',
+		'claude-3-sonnet-20240229',
+	],
 	properties: [
 		{ id: 'temperature', name: 'Temperature', value: 0.7, type: 'number' },
 	],
 	settings: [{ id: 'API_KEY', name: 'API Key', value: '', type: 'string' }],
-	author: 'Prompt Mixer team',
+	author: 'Prompt Mixer',
 	description:
 		"AnthropicAI connector runs Anthropic's safety-first language models",
 	iconBase64:

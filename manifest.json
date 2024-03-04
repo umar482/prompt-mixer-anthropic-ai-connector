@@ -1,0 +1,11 @@
+{
+	"id": "prompt-mixer-anthropic-ai-connector",
+	"name": "Anthropic AI Connector",
+	"version": "1.0.1",
+	"minAppVersion": "0.1.0",
+	"description": "AnthropicAI connector runs Anthropic's safety-first language models",
+	"author": "Prompt Mixer",
+	"authorUrl": "",
+	"fundingUrl": "",
+	"isDesktopOnly": false
+}
