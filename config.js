@@ -6,6 +6,7 @@ export const config = {
 		'claude-2.1',
 		'claude-3-opus-20240229',
 		'claude-3-sonnet-20240229',
+		'claude-3-haiku-20240307',
 	],
 	properties: [
 		{ id: 'temperature', name: 'Temperature', value: 0.7, type: 'number' },
