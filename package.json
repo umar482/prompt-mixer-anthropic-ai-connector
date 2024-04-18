@@ -1,6 +1,6 @@
 {
 	"name": "prompt-mixer-anthropic-ai-connector",
-	"version": "1.0.0",
+	"version": "1.0.3",
 	"description": "",
 	"main": "main.js",
 	"type": "module",
@@ -16,7 +16,7 @@
 	"author": "",
 	"license": "ISC",
 	"dependencies": {
-		"@anthropic-ai/sdk": "^0.12.4"
+		"@anthropic-ai/sdk": "^0.20.6"
 	},
 	"devDependencies": {
 		"@types/node": "^20.11.14",

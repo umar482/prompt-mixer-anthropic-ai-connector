@@ -9,7 +9,13 @@ export const config = {
 		'claude-3-haiku-20240307',
 	],
 	properties: [
-		{ id: 'temperature', name: 'Temperature', value: 0.7, type: 'number' },
+		{
+			id: 'temperature',
+			name: 'Temperature',
+			value: 0.7,
+			type: 'number',
+			max_tokens: 2048,
+		},
 	],
 	settings: [{ id: 'API_KEY', name: 'API Key', value: '', type: 'string' }],
 	author: 'Prompt Mixer',
