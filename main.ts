@@ -54,23 +54,27 @@ async function main(
 	properties: Record<string, unknown>,
 	settings: Record<string, unknown>,
 ) {
+	const total = prompts.length;
+	const { prompt, ...restProperties } = properties;
 	const anthropic = new Anthropic({ apiKey: settings?.[API_KEY] as string });
+	const systemPrompt = (prompt ||
+		config.properties.find((prop) => prop.id === 'prompt')?.value) as string;
 	const messageHistory: Message[] = [];
 	const outputs: ChatCompletion[] = [];
 
 	try {
-		for (const prompt of prompts) {
-			messageHistory.push({ role: 'user', content: prompt });
+		for (let index = 0; index < total; index++) {
+			messageHistory.push({ role: 'user', content: prompts[index] });
 			let retries = 3; // Maximum number of retries
 			let response;
 			do {
 				try {
 					response = (await anthropic.messages.create({
 						model: model,
-						system: 'You are a helpful assistant.',
+						system: systemPrompt,
 						max_tokens: 4096,
 						messages: messageHistory,
-						...properties,
+						...restProperties,
 					})) as AnthropicResponse;
 
 					// Process the successful response
