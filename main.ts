@@ -1,12 +1,29 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from './config.js';
 import { sleep } from './utils';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const API_KEY = 'API_KEY';
 
+interface TextMessageContent {
+	type: 'text';
+	text: string;
+}
+type MediaType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+
+interface ImageContent {
+	type: 'image';
+	source: {
+		type: 'base64';
+		media_type: MediaType;
+		data: string;
+	};
+}
+
 interface Message {
 	role: 'user' | 'assistant';
-	content: string;
+	content: (TextMessageContent | ImageContent)[];
 }
 
 interface Completion {
@@ -64,7 +81,26 @@ async function main(
 
 	try {
 		for (let index = 0; index < total; index++) {
-			messageHistory.push({ role: 'user', content: prompts[index] });
+			const userPrompt = prompts[index];
+			const imageUrls = extractImageUrls(userPrompt);
+			const messageContent: Message['content'] = [
+				{ type: 'text', text: userPrompt } as TextMessageContent,
+			];
+
+			for (const imageUrl of imageUrls) {
+				const base64Image = encodeImage(imageUrl);
+
+				messageContent.push({
+					type: 'image',
+					source: {
+						type: 'base64',
+						media_type: base64Image.ext,
+						data: base64Image.data,
+					},
+				} as ImageContent);
+			}
+
+			messageHistory.push({ role: 'user', content: messageContent });
 			let retries = 3; // Maximum number of retries
 			let response;
 			do {
@@ -85,8 +121,14 @@ async function main(
 					const outputTokens = response.usage.output_tokens;
 					messageHistory.push({
 						role: 'assistant',
-						content: assistantResponse,
+						content: [
+							{
+								type: 'text',
+								text: assistantResponse,
+							},
+						],
 					});
+
 					outputs.push({
 						output: assistantResponse,
 						stats: { model, inputTokens, outputTokens },
@@ -112,6 +154,36 @@ async function main(
 		console.error('Error in main function:', error);
 		throw error;
 	}
+}
+
+function encodeImage(imagePath: string): {
+	ext: MediaType;
+	data: string;
+} {
+	const ext = path.extname(imagePath).slice(1);
+	const imageBuffer = fs.readFileSync(imagePath);
+	return {
+		ext: `image/${ext}` as MediaType,
+		data: imageBuffer.toString('base64'),
+	};
+}
+
+function extractImageUrls(prompt: string): string[] {
+	const imageExtensions = ['.png', '.jpeg', '.jpg', '.webp', '.gif'];
+	// Updated regex to match both http and local file paths
+	const urlRegex =
+		/(https?:\/\/[^\s]+|[a-zA-Z]:\\[^:<>"|?\n]*|\/[^:<>"|?\n]*)/g;
+	const urls = prompt.match(urlRegex) || [];
+
+	return urls.filter((url) => {
+		const extensionIndex = url.lastIndexOf('.');
+		if (extensionIndex === -1) {
+			// If no extension found, return false.
+			return false;
+		}
+		const extension = url.slice(extensionIndex);
+		return imageExtensions.includes(extension.toLowerCase());
+	});
 }
 
 export { main, config };
