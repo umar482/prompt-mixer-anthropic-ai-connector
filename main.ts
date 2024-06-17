@@ -55,13 +55,48 @@ interface AnthropicResponse {
 	};
 }
 
-const mapToResponse = (outputs: ChatCompletion[]): ConnectorResponse => {
+interface ErrorCompletion {
+	output: '';
+	error: string;
+	model: string;
+	usage: undefined;
+}
+
+const mapToResponse = (
+	outputs: (ChatCompletion | ErrorCompletion)[],
+	model: string,
+): ConnectorResponse => {
 	return {
-		Completions: outputs.map((output) => ({
-			Content: output.output,
-			TokenUsage: output.stats.inputTokens + output.stats.outputTokens,
-		})),
-		ModelType: outputs[0].stats.model,
+		Completions: outputs.map((output) => {
+			if ('error' in output) {
+				return {
+					Content: null,
+					TokenUsage: undefined,
+					Error: output.error,
+				};
+			}
+
+			return {
+				Content: output.output,
+				TokenUsage: output.stats.inputTokens + output.stats.outputTokens,
+			};
+		}),
+		ModelType: outputs.length
+			? 'error' in outputs[0]
+				? model
+				: outputs[0].stats.model
+			: model,
+	};
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mapErrorToCompletion = (error: any, model: string): ErrorCompletion => {
+	const errorMessage = error.message || JSON.stringify(error);
+	return {
+		output: '',
+		error: errorMessage,
+		model,
+		usage: undefined,
 	};
 };
 
@@ -77,7 +112,7 @@ async function main(
 	const systemPrompt = (prompt ||
 		config.properties.find((prop) => prop.id === 'prompt')?.value) as string;
 	const messageHistory: Message[] = [];
-	const outputs: ChatCompletion[] = [];
+	const outputs: (ChatCompletion | ErrorCompletion)[] = [];
 
 	try {
 		for (let index = 0; index < total; index++) {
@@ -142,6 +177,8 @@ async function main(
 						await sleep(3000); // Wait for 3 seconds
 						retries--;
 					} else {
+						const completionWithError = mapErrorToCompletion(error, model);
+						outputs.push(completionWithError);
 						// Other errors or retries exhausted
 						console.error('Error:', error);
 						throw error;
@@ -149,7 +186,7 @@ async function main(
 				}
 			} while (retries > 0);
 		}
-		return mapToResponse(outputs);
+		return mapToResponse(outputs, model);
 	} catch (error) {
 		console.error('Error in main function:', error);
 		throw error;
