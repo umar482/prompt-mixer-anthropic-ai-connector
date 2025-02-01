@@ -246,7 +246,7 @@ function extractUrls(prompt: string): { imageUrls: string[]; pdfUrls: string[] }
 	const pdfExtension = '.pdf';
 	// Updated regex to match both http and local file paths
 	const urlRegex =
-		/(https?:\/\/[^\s]+|[a-zA-Z]:\\[^:<>"|?\n]*|\/[^:<>"|?\n]*)/g;
+		/(https?:\/\/[^\s]+|"[^"]+"|'[^']+\'|[a-zA-Z]:\\[^:<>"|?\s\n]*|\/[^:<>"|?\s\n]*)/g;
 	const urls = prompt.match(urlRegex) || [];
 
 	const result = {
@@ -254,7 +254,9 @@ function extractUrls(prompt: string): { imageUrls: string[]; pdfUrls: string[] }
 		pdfUrls: [] as string[],
 	};
 
-	for (const url of urls) {
+	for (let url of urls) {
+		// Remove single or double quotes if present
+		url = url.replace(/^['"]|['"]$/g, '');
 		const extensionIndex = url.lastIndexOf('.');
 		if (extensionIndex === -1) continue;
 		
