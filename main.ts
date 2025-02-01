@@ -6,24 +6,34 @@ import * as path from 'node:path';
 
 const API_KEY = 'API_KEY';
 
-interface TextMessageContent {
+interface TextContent {
 	type: 'text';
 	text: string;
 }
-type MediaType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 
 interface ImageContent {
 	type: 'image';
 	source: {
 		type: 'base64';
-		media_type: MediaType;
+		media_type: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 		data: string;
 	};
 }
 
+interface DocumentContent {
+	type: 'document';
+	source: {
+		type: 'base64';
+		media_type: 'application/pdf';
+		data: string;
+	};
+}
+
+type ContentBlock = TextContent | ImageContent | DocumentContent;
+
 interface Message {
 	role: 'user' | 'assistant';
-	content: (TextMessageContent | ImageContent)[];
+	content: ContentBlock[];
 }
 
 interface Completion {
@@ -117,9 +127,9 @@ async function main(
 	try {
 		for (let index = 0; index < total; index++) {
 			const userPrompt = prompts[index];
-			const imageUrls = extractImageUrls(userPrompt);
-			const messageContent: Message['content'] = [
-				{ type: 'text', text: userPrompt } as TextMessageContent,
+			const { imageUrls, pdfUrls } = extractUrls(userPrompt);
+			const messageContent: ContentBlock[] = [
+				{ type: 'text', text: userPrompt },
 			];
 
 			for (const imageUrl of imageUrls) {
@@ -132,10 +142,27 @@ async function main(
 						media_type: base64Image.ext,
 						data: base64Image.data,
 					},
-				} as ImageContent);
+				});
 			}
 
-			messageHistory.push({ role: 'user', content: messageContent });
+			for (const pdfUrl of pdfUrls) {
+				const base64PDF = encodePDF(pdfUrl);
+
+				messageContent.push({
+					type: 'document',
+					source: {
+						type: 'base64',
+						media_type: 'application/pdf',
+						data: base64PDF.data,
+					},
+				});
+			}
+
+			messageHistory.push({
+				role: 'user',
+				content: messageContent,
+			});
+
 			let retries = 3; // Maximum number of retries
 			let response;
 			do {
@@ -193,34 +220,55 @@ async function main(
 	}
 }
 
+function encodePDF(pdfPath: string): {
+	data: string;
+} {
+	const pdfBuffer = fs.readFileSync(pdfPath);
+	return {
+		data: pdfBuffer.toString('base64'),
+	};
+}
+
 function encodeImage(imagePath: string): {
-	ext: MediaType;
+	ext: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
 	data: string;
 } {
 	const ext = path.extname(imagePath).slice(1);
 	const imageBuffer = fs.readFileSync(imagePath);
 	return {
-		ext: `image/${ext}` as MediaType,
+		ext: `image/${ext}` as 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif',
 		data: imageBuffer.toString('base64'),
 	};
 }
 
-function extractImageUrls(prompt: string): string[] {
+function extractUrls(prompt: string): { imageUrls: string[]; pdfUrls: string[] } {
 	const imageExtensions = ['.png', '.jpeg', '.jpg', '.webp', '.gif'];
+	const pdfExtension = '.pdf';
 	// Updated regex to match both http and local file paths
 	const urlRegex =
-		/(https?:\/\/[^\s]+|[a-zA-Z]:\\[^:<>"|?\n]*|\/[^:<>"|?\n]*)/g;
+		/(https?:\/\/[^\s]+|"[^"]+"|'[^']+\'|[a-zA-Z]:\\[^:<>"|?\s\n]*|\/[^:<>"|?\s\n]*)/g;
 	const urls = prompt.match(urlRegex) || [];
 
-	return urls.filter((url) => {
+	const result = {
+		imageUrls: [] as string[],
+		pdfUrls: [] as string[],
+	};
+
+	for (let url of urls) {
+		// Remove single or double quotes if present
+		url = url.replace(/^['"]|['"]$/g, '');
 		const extensionIndex = url.lastIndexOf('.');
-		if (extensionIndex === -1) {
-			// If no extension found, return false.
-			return false;
+		if (extensionIndex === -1) continue;
+		
+		const extension = url.slice(extensionIndex).toLowerCase();
+		if (imageExtensions.includes(extension)) {
+			result.imageUrls.push(url);
+		} else if (extension === pdfExtension) {
+			result.pdfUrls.push(url);
 		}
-		const extension = url.slice(extensionIndex);
-		return imageExtensions.includes(extension.toLowerCase());
-	});
+	}
+
+	return result;
 }
 
 export { main, config };
