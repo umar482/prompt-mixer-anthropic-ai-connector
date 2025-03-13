@@ -1,3 +1,6 @@
+/**
+ * Configuration for the Anthropic AI Connector
+ */
 export const config = {
 	connectorName: 'Anthropic AI Connector',
 	models: [
@@ -8,21 +11,35 @@ export const config = {
 		'claude-3-5-haiku-latest',
 		'claude-3-5-sonnet-20240620',
 		'claude-3-5-sonnet-20241022',
-		'claude-3-5-sonnet-latest'
+		'claude-3-5-sonnet-latest',
+		'claude-3-7-sonnet-20250219',
+		'claude-3-7-sonnet-latest'
 	],
 	properties: [
 		{
 			id: 'temperature',
 			name: 'Temperature',
 			value: 0.7,
-			type: 'number',
-			max_tokens: 4096,
+			type: 'number'
 		},
 		{
 			id: 'prompt',
 			name: 'System Prompt',
 			value: 'You are a helpful assistant.',
 			type: 'string',
+		},
+		{
+			id: 'max_tokens',
+			name: 'Max Tokens',
+			value: 8192,
+			type: 'number'
+		},
+		{
+			id: 'thinking',
+			name: 'Thinking Budget Tokens',
+			value: 16000,
+			type: 'number',
+			description: 'Number of tokens to allocate for thinking steps (only works with Claude 3.7 Sonnet models)',
 		},
 	],
 	settings: [{ id: 'API_KEY', name: 'API Key', value: '', type: 'string' }],

@@ -6,11 +6,17 @@ import * as path from 'node:path';
 
 const API_KEY = 'API_KEY';
 
+/**
+ * Represents a text content block in a message
+ */
 interface TextContent {
 	type: 'text';
 	text: string;
 }
 
+/**
+ * Represents an image content block in a message
+ */
 interface ImageContent {
 	type: 'image';
 	source: {
@@ -20,6 +26,9 @@ interface ImageContent {
 	};
 }
 
+/**
+ * Represents a document content block in a message
+ */
 interface DocumentContent {
 	type: 'document';
 	source: {
@@ -29,7 +38,17 @@ interface DocumentContent {
 	};
 }
 
+/**
+ * Represents a thinking content block in a response
+ */
+interface ThinkingContent {
+	type: 'thinking';
+	thinking: string;
+	signature: string;
+}
+
 type ContentBlock = TextContent | ImageContent | DocumentContent;
+type ResponseContentBlock = TextContent | ThinkingContent;
 
 interface Message {
 	role: 'user' | 'assistant';
@@ -51,8 +70,22 @@ interface ChatCompletion {
 	stats: { model: string; inputTokens: number; outputTokens: number };
 }
 
+/**
+ * Configuration for the thinking feature
+ */
+interface ThinkingConfig {
+	type: 'enabled';
+	budget_tokens: number;
+}
+
+/**
+ * Response from the Anthropic API
+ */
 interface AnthropicResponse {
-	content: { text: string; type: string }[];
+	content: (
+		| { text: string; type: string }
+		| { type: 'thinking'; thinking: string; signature: string }
+	)[];
 	id: string;
 	model: string;
 	role: string;
@@ -110,6 +143,15 @@ const mapErrorToCompletion = (error: any, model: string): ErrorCompletion => {
 	};
 };
 
+/**
+ * Main function to process prompts and generate completions
+ * 
+ * @param model - The model to use for generation
+ * @param prompts - Array of prompts to process
+ * @param properties - Configuration properties for the model
+ * @param settings - API settings
+ * @returns A connector response with completions
+ */
 async function main(
 	model: string,
 	prompts: string[],
@@ -117,12 +159,15 @@ async function main(
 	settings: Record<string, unknown>,
 ) {
 	const total = prompts.length;
-	const { prompt, ...restProperties } = properties;
+	const { prompt, thinking, ...restProperties } = properties;
 	const anthropic = new Anthropic({ apiKey: settings?.[API_KEY] as string });
 	const systemPrompt = (prompt ||
 		config.properties.find((prop) => prop.id === 'prompt')?.value) as string;
 	const messageHistory: Message[] = [];
 	const outputs: (ChatCompletion | ErrorCompletion)[] = [];
+	
+	// Check if model supports thinking feature (only Claude 3.7 Sonnet models)
+	const supportsThinking = model.startsWith('claude-3-7-sonnet-');
 
 	try {
 		for (let index = 0; index < total; index++) {
@@ -167,17 +212,37 @@ async function main(
 			let response;
 			do {
 				try {
-					response = (await anthropic.messages.create({
+					// Create API call parameters
+					const apiParams = {
 						model: model,
 						system: systemPrompt,
 						max_tokens: 4096,
 						messages: messageHistory,
 						...restProperties,
-					})) as AnthropicResponse;
+					};
+					
+					// Add thinking parameter if supported and enabled
+					if (supportsThinking && thinking) {
+						// @ts-ignore - Anthropic SDK types may not include thinking yet
+						apiParams.thinking = {
+							type: 'enabled',
+							budget_tokens: Number(thinking)
+						};
+					}
+					
+					response = (await anthropic.messages.create(apiParams)) as AnthropicResponse;
 
 					// Process the successful response
+					let thinkingContent = '';
 					const assistantResponse = response.content
-						.map((content) => content.text)
+						.map((content) => {
+							if ('type' in content && content.type === 'thinking' && 'thinking' in content) {
+								thinkingContent += content.thinking + '\n';
+								return '';
+							}
+							return 'text' in content ? content.text : '';
+						})
+						.filter(Boolean)
 						.join('\n');
 					const inputTokens = response.usage.input_tokens;
 					const outputTokens = response.usage.output_tokens;
@@ -191,8 +256,13 @@ async function main(
 						],
 					});
 
+					// Include thinking content if present
+					const finalOutput = thinkingContent 
+						? `${thinkingContent}\n${assistantResponse}` 
+						: assistantResponse;
+						
 					outputs.push({
-						output: assistantResponse,
+						output: finalOutput,
 						stats: { model, inputTokens, outputTokens },
 					});
 					console.log(`Response to prompt: ${prompt}`, assistantResponse);
