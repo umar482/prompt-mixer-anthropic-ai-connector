@@ -1,8 +1,11 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { config } from './config.js';
-import { sleep } from './utils';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import Anthropic from '@anthropic-ai/sdk';
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+import { config } from './config.js';
+import { sleep } from './utils';
 
 const API_KEY = 'API_KEY';
 
@@ -38,6 +41,12 @@ interface DocumentContent {
 	};
 }
 
+interface ToolResultContent {
+	type: 'tool_result';
+	tool_use_id: string;
+	content: string;
+};
+
 /**
  * Represents a thinking content block in a response
  */
@@ -47,7 +56,20 @@ interface ThinkingContent {
 	signature: string;
 }
 
-type ContentBlock = TextContent | ImageContent | DocumentContent;
+interface ToolUseContent {
+	type: 'tool_use';
+	id: string;
+	name: string;
+	input: Record<string, unknown>;
+}
+
+type ContentBlock = 
+	|TextContent
+	| ImageContent
+	| DocumentContent
+	| ToolResultContent
+	| ToolUseContent;
+
 type ResponseContentBlock = TextContent | ThinkingContent;
 
 interface Message {
@@ -82,10 +104,7 @@ interface ThinkingConfig {
  * Response from the Anthropic API
  */
 interface AnthropicResponse {
-	content: (
-		| { text: string; type: string }
-		| { type: 'thinking'; thinking: string; signature: string }
-	)[];
+	content: (TextContent | ThinkingContent | ToolUseContent)[];
 	id: string;
 	model: string;
 	role: string;
@@ -143,6 +162,158 @@ const mapErrorToCompletion = (error: any, model: string): ErrorCompletion => {
 	};
 };
 
+interface MCPServerConfig {
+	command: string;
+	args: string[];
+}
+
+interface MCPClient {
+	client: Client;
+	tools: {
+		name: string;
+		description?: string;
+		input_schema: any;
+	}[];
+}
+
+async function initializeMCPClients(mcpServers: Record<string, MCPServerConfig>) {
+	const clients: Record<string, MCPClient> = {};
+	for (const [serverName, serverConfig] of Object.entries(mcpServers)) {
+		const client = new Client({ name: `mcp-client-${serverName}`, version: "1.0.0" });
+		const transport = new StdioClientTransport({
+			command: serverConfig.command,
+			args: serverConfig.args,
+		});
+		await client.connect(transport);
+		const toolsResult = await client.listTools();
+
+		const normalizedServerName = serverName.replace(/_/g, '-');
+		
+		clients[normalizedServerName] = {
+			client,
+			tools: toolsResult.tools.map((tool) => ({
+				name: `${normalizedServerName}_${tool.name}`,
+				description: tool.description,
+				input_schema: tool.inputSchema,
+			})),
+		};
+	}
+	return clients;
+}
+
+const callTool  = async (content: ToolUseContent, clients: Record<string, MCPClient>) => {
+	const [serverName, ...rest] = content.name.split('_');
+	const toolName = rest.join('_');
+	const client = clients[serverName]?.client;
+	if (!client) {
+		throw new Error(`Client for server ${serverName} not found`);
+	}
+
+	const result = await client.callTool({
+		name: toolName,
+		arguments: content.input,
+	});
+
+	return result;
+}
+interface APIParams {
+	model: string;
+	system: string;
+	max_tokens: number;
+	tools: {
+		name: string;
+		description?: string;
+		input_schema: any;
+	}[];
+}
+
+async function processModelRequest(
+	anthropic: Anthropic,
+	apiParams: APIParams,
+	mcpClients: Record<string, MCPClient>,
+	messageHistory: Message[],
+	model: string,
+	outputs = [] as (ChatCompletion | ErrorCompletion)[],
+	retries = 3
+): Promise<(ChatCompletion | ErrorCompletion)[]> {
+	try {
+		const response = (await anthropic.messages.create(
+			{ ...apiParams, messages: messageHistory },
+		)) as AnthropicResponse;
+		
+		let assistantResponse = '';
+		let thinkingContent = '';
+		let inputTokens = response.usage.input_tokens;
+		let outputTokens = response.usage.output_tokens;
+
+		const toolUsePromises: Promise<void>[] = [];
+
+		for (const content of response.content) {
+			if (content.type === 'text') {
+				assistantResponse += content.text;
+			} else if (content.type === 'thinking') {
+				thinkingContent += (content as ThinkingContent).thinking + '\n';
+			} else if (content.type === 'tool_use') {
+				messageHistory.push({
+					role: 'assistant',
+					content: [content],
+				});
+
+				const res = '\n\nCalling tool:\n\n```json\n' + JSON.stringify(content, null, 2) + '\n```\n\n';
+				assistantResponse += res;
+
+				const toolPromise = (async () => {
+					const result = await callTool(content, mcpClients);
+				
+					const toolCollingResult = '\n\nTool calling result:\n\n```json\n' + JSON.stringify(result, null, 2) + '\n```\n\n';
+					assistantResponse += toolCollingResult;
+
+					messageHistory.push({
+						role: 'user',
+						content: [
+							{
+								type: 'tool_result',
+								tool_use_id: content.id,
+								content: JSON.stringify(result),
+							},
+						],
+					});
+				})();
+
+				toolUsePromises.push(toolPromise);
+			}
+		}
+
+		await Promise.all(toolUsePromises);
+
+		const finalOutput = thinkingContent
+		? `${thinkingContent}\n${assistantResponse}`
+		: assistantResponse;
+
+		outputs.push({
+			output: finalOutput,
+			stats: { model, inputTokens, outputTokens },
+		});
+
+		if (toolUsePromises.length > 0) {
+			return await processModelRequest(anthropic, apiParams, mcpClients, messageHistory, model, outputs);
+		}
+
+		return outputs;
+	} catch (error) {
+		if (error.status === 429 && retries > 0) {
+			console.warn('Rate limit exceeded, retrying...');
+			await sleep(3000); 
+			return await processModelRequest(anthropic, apiParams, mcpClients, messageHistory, model, outputs, retries - 1);
+		} else {
+			const completionWithError = mapErrorToCompletion(error, model);			
+			outputs.push(completionWithError);
+			console.error('Error:', error);
+			return outputs;
+		}
+	}
+}
+
 /**
  * Main function to process prompts and generate completions
  * 
@@ -159,12 +330,20 @@ async function main(
 	settings: Record<string, unknown>,
 ) {
 	const total = prompts.length;
-	const { prompt, thinking, ...restProperties } = properties;
+	const { prompt, thinking, tools, ...restProperties } = properties as {
+		prompt?: string;
+		thinking?: number;
+		tools?: {
+			mcpServers?: Record<string, MCPServerConfig>;
+		};
+	};
 	const anthropic = new Anthropic({ apiKey: settings?.[API_KEY] as string });
 	const systemPrompt = (prompt ||
 		config.properties.find((prop) => prop.id === 'prompt')?.value) as string;
 	const messageHistory: Message[] = [];
-	const outputs: (ChatCompletion | ErrorCompletion)[] = [];
+
+	const mcpClients = tools?.mcpServers ? await initializeMCPClients(tools.mcpServers) : {};
+	const allTools = Object.values(mcpClients).flatMap(client => client.tools);
 	
 	// Check if model supports thinking feature (only Claude 3.7 Sonnet models)
 	const supportsThinking = model.startsWith('claude-3-7-sonnet-');
@@ -208,86 +387,33 @@ async function main(
 				content: messageContent,
 			});
 
-			let retries = 3; // Maximum number of retries
-			let response;
-			do {
-				try {
-					// Create API call parameters
-					const apiParams = {
-						model: model,
-						system: systemPrompt,
-						max_tokens: 4096,
-						messages: messageHistory,
-						...restProperties,
-					};
-					
-					// Add thinking parameter if supported and enabled
-					if (supportsThinking && thinking) {
-						// @ts-ignore - Anthropic SDK types may not include thinking yet
-						apiParams.thinking = {
-							type: 'enabled',
-							budget_tokens: Number(thinking)
-						};
-					}
-					
-					response = (await anthropic.messages.create(apiParams)) as AnthropicResponse;
+			const apiParams = {
+				model: model,
+				system: systemPrompt,
+				max_tokens: 4096,
+				tools: allTools,
+				...restProperties,
+			};
+			
+			if (supportsThinking && thinking) {
+				// @ts-ignore - Anthropic SDK types may not include thinking yet
+				apiParams.thinking = {
+					type: 'enabled',
+					budget_tokens: Number(thinking)
+				};
+			}
 
-					// Process the successful response
-					let thinkingContent = '';
-					const assistantResponse = response.content
-						.map((content) => {
-							if ('type' in content && content.type === 'thinking' && 'thinking' in content) {
-								thinkingContent += content.thinking + '\n';
-								return '';
-							}
-							return 'text' in content ? content.text : '';
-						})
-						.filter(Boolean)
-						.join('\n');
-					const inputTokens = response.usage.input_tokens;
-					const outputTokens = response.usage.output_tokens;
-					messageHistory.push({
-						role: 'assistant',
-						content: [
-							{
-								type: 'text',
-								text: assistantResponse,
-							},
-						],
-					});
-
-					// Include thinking content if present
-					const finalOutput = thinkingContent 
-						? `${thinkingContent}\n${assistantResponse}` 
-						: assistantResponse;
-						
-					outputs.push({
-						output: finalOutput,
-						stats: { model, inputTokens, outputTokens },
-					});
-					console.log(`Response to prompt: ${prompt}`, assistantResponse);
-					break; // Exit the loop on success
-				} catch (error) {
-					if (error.status === 429 && retries > 0) {
-						// Rate limit error: Wait and retry
-						console.warn('Rate limit exceeded, retrying...');
-						await sleep(3000); // Wait for 3 seconds
-						retries--;
-					} else {
-						const completionWithError = mapErrorToCompletion(error, model);
-						outputs.push(completionWithError);
-						// Other errors or retries exhausted
-						console.error('Error:', error);
-						throw error;
-					}
-				}
-			} while (retries > 0);
+			const outputs = await processModelRequest(anthropic, apiParams, mcpClients, messageHistory, model);
+			return mapToResponse(outputs, model);
 		}
-		return mapToResponse(outputs, model);
 	} catch (error) {
 		console.error('Error in main function:', error);
 		throw error;
-	}
+	} finally {
+		for (const client of Object.values(mcpClients)) {
+				await client.client.close();
+		}
+}
 }
 
 function encodePDF(pdfPath: string): {
