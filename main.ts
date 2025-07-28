@@ -128,25 +128,31 @@ interface ErrorCompletion {
  * All available Claude models
  */
 const CLAUDE_MODELS = {
+	// Claude 4 models (latest)
+	CLAUDE_4_SONNET: 'claude-sonnet-4-20250514',
+	CLAUDE_4_SONNET_LATEST: 'claude-4-sonnet-latest',
+	
+	// Claude 3.7 Sonnet models
+	CLAUDE_3_7_SONNET: 'claude-3-7-sonnet-20250219',
+	CLAUDE_3_7_SONNET_LATEST: 'claude-3-7-sonnet-latest',
+	
 	// Claude 3.5 Sonnet models
 	CLAUDE_3_5_SONNET_LATEST: 'claude-3-5-sonnet-20241022',
 	CLAUDE_3_5_SONNET: 'claude-3-5-sonnet-20240620',
 	
 	// Claude 3.5 Haiku
 	CLAUDE_3_5_HAIKU: 'claude-3-5-haiku-20241022',
+	CLAUDE_3_5_HAIKU_LATEST: 'claude-3-5-haiku-latest',
 	
 	// Claude 3 models
 	CLAUDE_3_OPUS: 'claude-3-opus-20240229',
 	CLAUDE_3_SONNET: 'claude-3-sonnet-20240229',
 	CLAUDE_3_HAIKU: 'claude-3-haiku-20240307',
 	
-	// Claude 2 models
+	// Claude 2 models (legacy)
 	CLAUDE_2_1: 'claude-2.1',
 	CLAUDE_2_0: 'claude-2.0',
 	CLAUDE_INSTANT_1_2: 'claude-instant-1.2',
-	
-	// Special models that might support thinking (based on your original code)
-	CLAUDE_3_7_SONNET: 'claude-3-7-sonnet-20241022', // This might be a newer version
 };
 
 const mapToResponse = (
@@ -400,8 +406,11 @@ async function main(
 	const mcpClients = tools?.mcpServers ? await initializeMCPClients(tools.mcpServers) : {};
 	const allTools = Object.values(mcpClients).flatMap(client => client.tools);
 	
-	// Check if model supports thinking feature (based on your original code)
-	const supportsThinking = model.startsWith('claude-3-7-sonnet-') || 
+	// Check if model supports thinking feature
+	const supportsThinking = model.startsWith('claude-4-') ||
+	                        model.startsWith('claude-sonnet-4-') ||
+	                        model.startsWith('claude-3-7-sonnet-') || 
+							model.startsWith('claude-opus-') || 
 	                        model.includes('claude-3-5-sonnet-20241022') ||
 	                        model.includes('claude-3-5-haiku-20241022');
 	
